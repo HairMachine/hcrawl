@@ -56,7 +56,7 @@ typedef enum SpecialAttack {
 } SpecialAttack;
 
 typedef enum ActorStates {
-    STATE_IDLE, STATE_ALERTED, STATE_WANDER
+    STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN
 } ActorState;
 
 typedef struct Entity {
@@ -78,6 +78,7 @@ typedef struct Entity {
     ActorState state;
     bool actedThisTurn;
     bool seen;
+    bool canHideIn;
 } Entity;
 
 typedef enum Attribute {
@@ -202,9 +203,9 @@ Entity entities[ENT_END] = {
     (Entity) {"Feature Spawner 1"},
 
     (Entity) {"= FEATURE START ="},
-    (Entity) {"Pile of debris", "A pile of random bits and pieces.", 1000},
+    (Entity) {"Pile of debris", "A pile of random bits and pieces.", 1000, .canHideIn=true},
     (Entity) {"Safe", "A sturdy cabinet, locked with a combination lock.", 1000},
-    (Entity) {"Table", "A four-legged wooden surface with papers on it.", 1000},
+    (Entity) {"Table", "A four-legged wooden surface with papers on it.", 1000, .canHideIn=true},
     (Entity) {"Exploding Barrel", "This red barrel is marked with stark warning signs.", 25},
     (Entity) {"Well", "Long and dark and deep is the drop. Who knows what's down there?", 1000},
     (Entity) {"Touchplate", "The floor here is just slightly offset. It's a trap!", 1000},
@@ -214,7 +215,7 @@ Entity entities[ENT_END] = {
     (Entity) {"Book shop", "A book shop, filled with interesting tomes. Improve your skills here.", 1000},
     (Entity) {"Counter", "A bored-looking assistant waits to take your order.", 1000},
     (Entity) {"Ticket office", "An attendant waits behind a desk, selling tickets to the gallery.", 1000},
-    (Entity) {"Bed", "A bed. Use it to sleep and recover rest and HP (up to 50 percent of max)", 1000},
+    (Entity) {"Bed", "A bed. Use it to sleep and recover rest and HP (up to 50 percent of max)", 1000, .canHideIn=true},
 
     (Entity) {"= ITEM START ="},
     (Entity) {"Pistol", "A compact hand-held weapon. Fires 9mm rounds.", 1000, 1, .attack=8, .damage={1, 6, 0}, .ammoType=ENT_9MM},
@@ -356,7 +357,7 @@ void EncounterTemplate_humpyHouse(Encounter* enc) {
     Room* hallway = Encounter_addRoom(enc, 0, 0, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
     Room* kitchen = Encounter_addRoom(enc, 0, 1, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
     Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing.", {}});
-    Room* bedroom = Encounter_addRoom(enc, 2, 0, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_HUMPY_CELLAR_KEY}});
+    Room* bedroom = Encounter_addRoom(enc, 2, 0, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
     Encounter_linkRooms(hallway, kitchen, DIR_SOUTH);
     Encounter_linkRooms(hallway, landing, DIR_EAST);
     Encounter_linkRooms(landing, bedroom, DIR_EAST);
@@ -547,18 +548,19 @@ void CombatReward(Entity* e) {
 }
 
 typedef enum {
-    MENU_VERB, MENU_ATTACK, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE, MENU_INVENTORY, MENU_SKILLS, MENU_CHANGE_LOCATION
+    MENU_VERB, MENU_ATTACK, MENU_HIDE, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE, MENU_INVENTORY, MENU_SKILLS, MENU_CHANGE_LOCATION
 } MenuIds;
 
 void SetVerbMenu() {
     actionMenu.id = MENU_VERB;
     actionMenu.items[0] = (UIElement) {"(A)ttack", MENU_ATTACK, KEY_A, 128, 16, 1, 16, textColour};
-    actionMenu.items[1] = (UIElement) {"(P)ick up", MENU_PICKUP, KEY_P, 128, 16, 1, 16, textColour};
-    actionMenu.items[2] = (UIElement) {"E(x)amine", MENU_EXAMINE, KEY_X, 128, 16, 1, 16, textColour};
-    actionMenu.items[3] = (UIElement) {"(U)se", MENU_USE, KEY_U, 128, 16, 1, 16, textColour};
-    actionMenu.items[4] = (UIElement) {"(I)nventory", MENU_INVENTORY, KEY_I, 128, 16, 1, 16, textColour};
-    actionMenu.items[5] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
-    actionMenu.nextItem = 6;
+    actionMenu.items[1] = (UIElement) {"(H)ide", MENU_HIDE, KEY_H, 128, 16, 1, 16, textColour};
+    actionMenu.items[2] = (UIElement) {"(P)ick up", MENU_PICKUP, KEY_P, 128, 16, 1, 16, textColour};
+    actionMenu.items[3] = (UIElement) {"E(x)amine", MENU_EXAMINE, KEY_X, 128, 16, 1, 16, textColour};
+    actionMenu.items[4] = (UIElement) {"(U)se", MENU_USE, KEY_U, 128, 16, 1, 16, textColour};
+    actionMenu.items[5] = (UIElement) {"(I)nventory", MENU_INVENTORY, KEY_I, 128, 16, 1, 16, textColour};
+    actionMenu.items[6] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
+    actionMenu.nextItem = 7;
 }
 
 void SetEntityMenu(int id) {
@@ -566,6 +568,20 @@ void SetEntityMenu(int id) {
     int key = 49;
     for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
         if (currentRoom->entities[i].created && currentRoom->entities[i].hp > 0) {
+            actionMenu.items[key-49] = (UIElement) {"", i, key, 128, 16, 1, 16, textColour};
+            TextCopy(actionMenu.items[key-49].label, TextFormat("%i) %s", key-48, currentRoom->entities[i].name));
+            key++;
+        }
+    }
+    actionMenu.items[key-49] = (UIElement) {"0) Back", -1, 48, 128, 16, 1, 16, textColour};
+    actionMenu.nextItem = key-48;
+}
+
+void SetHideMenu(int id) {
+    actionMenu.id = id;
+    int key = 49;
+    for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
+        if (currentRoom->entities[i].created && currentRoom->entities[i].hp > 0 && currentRoom->entities[i].canHideIn) {
             actionMenu.items[key-49] = (UIElement) {"", i, key, 128, 16, 1, 16, textColour};
             TextCopy(actionMenu.items[key-49].label, TextFormat("%i) %s", key-48, currentRoom->entities[i].name));
             key++;
@@ -684,8 +700,28 @@ void MakeNoise(int potentialLoudness) {
     }
 }
 
+void Fight(Entity* attacker, Entity* defender) {
+    // Rule out armour and weapons from fighting; only things with both attack and defense are monsters
+    if (!attacker->attack || !attacker->defence) {
+        return;
+    }
+    int chanceToHit;
+    if (!defender->defence) {
+        chanceToHit = 100;
+    } else {
+        chanceToHit = attacker->attack * 50 / defender->defence;
+    }
+    if (GetRandomValue(1, 100) < chanceToHit) {
+        defender->hp -= RollDice(playerEntity.damage);
+    }
+    attacker->actedThisTurn = true;
+    defender->actedThisTurn = true;
+    MakeNoise(15);
+}
+
 
 void Verb_use(Entity* e) {
+    playerEntity.state = STATE_IDLE;
     switch (e->id) {
         case ENT_HUMPY_FRONT_DOOR:
             SetKnownLocationMenu();
@@ -756,26 +792,8 @@ void Verb_inventoryUse(Entity* e) {
     }
 }
 
-void Fight(Entity* attacker, Entity* defender) {
-    // Rule out armour and weapons from fighting; only things with both attack and defense are monsters
-    if (!attacker->attack || !attacker->defence) {
-        return;
-    }
-    int chanceToHit;
-    if (!defender->defence) {
-        chanceToHit = 100;
-    } else {
-        chanceToHit = attacker->attack * 50 / defender->defence;
-    }
-    if (GetRandomValue(1, 100) < chanceToHit) {
-        defender->hp -= RollDice(playerEntity.damage);
-    }
-    attacker->actedThisTurn = true;
-    defender->actedThisTurn = true;
-    MakeNoise(15);
-}
-
 void Verb_attack(Entity* e) {
+    playerEntity.state = STATE_IDLE;
     if (playerStats.weapon) {
         // Do we have the correct ammo type?
         Entity* ammo = Inventory_getByEntityId(entities[playerStats.weapon].ammoType);
@@ -794,6 +812,7 @@ void Verb_attack(Entity* e) {
 }
 
 void Verb_pickup(Entity* e) {
+    playerEntity.state = STATE_IDLE;
     if (!e->portable) {
         return;
     }
@@ -821,11 +840,13 @@ void HandleGameTurn() {
                 Entity* e = &r->entities[i];
                 if (!e->actedThisTurn && e->created && e->hp > 0 && e->attack && e->defence) {
                     if (r == currentRoom) {
-                        // Anything that can attack now attacks the player
-                        if (e->state == STATE_ALERTED) {
-                            Fight(e, &playerEntity);
-                        }
-                        e->state = STATE_ALERTED;
+                        // If the player isn't hiding, monsters do bad things
+                        if (playerEntity.state != STATE_HIDDEN) {
+                            if (e->state == STATE_ALERTED) {
+                                Fight(e, &playerEntity);
+                            }
+                            e->state = STATE_ALERTED;
+                        }                        
                         if (!e->seen) {
                             playerStats.stress += (e->fear - playerStats.stressResistance > 1) ? e->fear - playerStats.stressResistance : 1;
                             e->seen = true;
@@ -893,6 +914,14 @@ void HandlePlayerTurn() {
                             Verb_attack(&currentRoom->entities[actionMenu.items[0].action]);
                         }
                         return;
+                    case MENU_HIDE:
+                        for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
+                            if (Entity_isMob(&currentRoom->entities[i])) {
+                                return;
+                            }
+                        }
+                        SetHideMenu(menuAction);
+                        return;
                     case MENU_PICKUP:
                     case MENU_EXAMINE:
                     case MENU_USE:
@@ -905,7 +934,7 @@ void HandlePlayerTurn() {
                         // Player cannot leave if a) there are enemies and b) stress is 100% or more
                         if (playerStats.stress >= 100) {
                             for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
-                                if (currentRoom->entities[i].attack && currentRoom->entities[i].hp > 0) {
+                                if (Entity_isMob(&currentRoom->entities[i])) {
                                     return;
                                 }
                             }
@@ -924,6 +953,7 @@ void HandlePlayerTurn() {
                     SetVerbMenu();
                     return;
                 }
+                playerEntity.state = STATE_IDLE;
                 currentRoom = currentRoom->exits[menuAction];
                 MakeNoise(-25);
                 HandleGameTurn();
@@ -983,6 +1013,7 @@ void HandlePlayerTurn() {
                     SetVerbMenu();
                     GainExp(1);
                 }
+                playerEntity.state = STATE_IDLE;
                 HandleGameTurn();
                 // Reduce survival attributes
                 playerStats.actions--;
@@ -1022,6 +1053,11 @@ void HandlePlayerTurn() {
                         case MENU_USE:
                             Verb_use(e);
                             refreshMenu = false;
+                            break;
+                        case MENU_HIDE:
+                            playerEntity.state = STATE_HIDDEN;
+                            refreshMenu = false;
+                            SetVerbMenu();
                             break;
                         default:
                             break;
@@ -1110,6 +1146,9 @@ static void UpdateDrawFrame(void) {
             DrawTextEx(fontTtf, TextFormat("WPN: %s", entities[playerStats.weapon].name), (Vector2) {210, 400}, fontSize, 0, textColour);
         } else {
             DrawTextEx(fontTtf, "WPN: Fists", (Vector2) {210, 400}, fontSize, 0, textColour);
+        }
+        if (playerEntity.state == STATE_HIDDEN) {
+            DrawTextEx(fontTtf, "Hidden", (Vector2) {210, 416}, fontSize, 0, MAROON);
         }
         // Popup box for messages
         if (TextLength(popupBox)) {
