@@ -1,0 +1,133 @@
+Game Structure
+**************
+
+Your activties consume Actions, and when you hit 0 actions a survival tick happens. A survival tick depletes your food, rest and morale by one level.
+
+You get debuffed as these levels start to drop with skill and attribute reductions. The levels are:
+- Level 4: normal.
+- Level 3: -5 to all skills.
+- Level 2: -15 to all skills, -1 to all attibutes.
+- Level 1: -25 to all skills, -5 to all attributes.
+- Level 0: death.
+
+In addition you die if any attribute hits 0.
+
+Eating and resting are things you can do in special locations.
+Those locations can also refresh morale if they are very high quality, like a fine restaurant or beautiful hotel.
+
+Morale in general is refreshed by doing entertaining things.
+
+You can carry rations in your inventory and replenish your food level by consuming it.
+Rations are stack items like ammo and the main quality they have is how effective they are at filling you up.
+
+You can carry camping equipment in your inventory and use it to rest, as long as there aren't any monsters around.
+This isn't a great rest and doesn't increase HP like a bed, but it's better than nothing.
+You can only camp in areas designated as wilderness, so not in dungeons or in towns.
+
+The primary game loop is finding locations you can go to to get powerups.
+You then go there and narrow down your search by finding more information until you get to a special location with a challenge to complete to get the powerup.
+
+World Structure
+***************
+
+The world is full planet size like in Eldritch Horror (but isn't Earth), so brute force is not effective. Structure:
+
+- Location consists of Encounters you generate and can sometimes return to (partially complete, world state is not being stored correctly)
+- Region is several locations put together; dungeons, towns, special buildings, wilderness areas and so on.
+- Cultural Area is equivalent to a nation; it's a collection of Regions. The Cultural Area shares a common culture.
+- The World is a collection of Cultural Areas.
+
+All of these are actually represented in code using the Location struct, but they are typed so the game can get some info about what each type of place is.
+
+You move between Locations using "Doors" which are entity objects that connect the locations together.
+
+Character building
+******************
+
+To gain power, find and power up your spells in a classic RPG style.
+
+You gain XP for finding new things. XP is granted for a wide range of activities.
+XP bonuses are granted for doing something for the first time and certain significant events give more XP than others, like seeing an opera vs eating a cheeseburger.
+Bonus XP is granted if you have relevant skill points in that thing; the bonus % is = to your skill score.
+
+You can spend your XP to level up your skill points. This is non linear, and follows a wonky curve.
+The amount of XP it takes to raise a skill point drops until it reaches 50, then begins to rise sharply.
+Until 50, the formula is 100 - current level to add one point (so at 0 it's 100XP, at 50 it's 50XP).
+After 50, the formula is 50 + (current level-50)^2. So to raise a skill to level 100 it will cost 2550 XP (that's a huge amount in this game).
+
+XP is spent in colleges and other learning institutions. Some are free, others require membership or payment.
+Each learning institution can only teach you a certain set of skills. You will need to explore around to find sources of everything you want.
+
+Apart from skill points, you gain power by finding items that grant you power.
+All the spells and powerups are physical items you need to find in the world, and are the real way you gain power.
+
+Clues give you one piece of information about a location. This is usually like a breadcrumb trail from the main world map into the specific location.
+You should only be able to either find or understand the specific information by "zooming in" on the location; local resources can give you the next step.
+
+- Find out what the thing is and its powers (first level)
+- Cultural Area of thing
+- Region where the thing is
+- Individual location where the thing is
+- Figure out what you need to do to get the thing (fight, talk, bribe, sneak, use your magic - whatever!)
+
+For each item the game needs to randomly generate the above information and add it to the game world list.
+When you explore, stuff is drawn from this list on the fly and flavoured with whatever text is appropriate for the current location.
+These are item rolls in diablo, except you specify what you want and the game generates it based on your skills. You can just fail to find something - level up!
+
+You need the information from the previous step to unlock later steps; so for example the info about the general location does not contain info about what the thing is.
+
+Getting items themselves is varied and open-ended. They are almost always held by some group, so you will need to either convince them to give it to you or steal it.
+
+Spells and Powering Up
+**********************
+
+Spells allow you to perform an individual verb on demand. These may have combat or non-combat effects, although primarily they are combat related.
+
+Spells are found written on old books, scrolls, tablets etc. that you must hunt down, hidden in strange eldritch locations, in private collections, etc.
+
+Once you find a spell you will need to try and decipher it. This skill check uses the appropriate school skill for the spell. Failing rolls for mutations.
+
+Mutations are bad effects that stack up, like in DCSS. They can be cleared at holy places (works better with a higher wealth level).
+Some mutations are debilitating weaknesses but some actually cause physical deformities which will disgust and frighten other people.
+
+The higher level the spell, the more skill will be required to cast the spell.
+
+Spells are cast to apply their effect to an item. You need to Imbue the spell into a weapon which has slots remaining for the imbuement.
+Items have different numbers of slots for Imbuement; one spell per slot. Things like wands and staves have more; shotguns have none, unless they're special.
+
+Once imbued into a weapon, you can now cast the spell on demand. This consumes your power points (max power points are determined by the POW attribute).
+The amount of power points is determined by the current spell and is reduced by your spellcasting skill, rounding down.
+So if a spell costs 51 power points to cast, and you have a spell casting of 20, then it will cost 41 power points to cast this spell.
+With a spellcasting of 50, this would be 26 power points. With a spellcasting of 100, this would be 1 (actually every spell is 1 PP if you get there).
+Power points regenerate on resting or by drinking from an Elixir.
+
+Spells can be levelled up to increase their effects. To level up a spell, you need to find Power Crystals.
+Consuming these crystals renders them inert but lets you choose one of your spells to level up.
+Spells can be levelled up from 1 to 20, increasing in power or casting efficiency as they go.
+
+Attribute Increases
+*******************
+
+There are rare artefacts and experiences that can increase your attributes.
+
+While much simpler than spells mechanically, they are discovered in the same way; you learn of the experience, what it's said to do, then figure out how to get it.
+
+You might gain an attribute by entering a portal to another world and touching a strange shrine that shows you the secrets of the universe.
+You might do so from drinking the strange concoction of a mad scientist.
+You might visit a culture and perform a special ritual with them which improves you as a person.
+
+Wealth
+******
+
+Currency is not directly handled. Instead you have a Wealth Level which you increase over time by performing certain activities.
+
+Your Wealth Level entitles you to perform certain actions, for example eating in a fine restaurant or renting an excellent apartment.
+It also enables you to buy higher quality gear and more of it.
+Due to the harshly limited inventory, it won't be broken to allow the user to choose whatever they want - it's a "loadout" more than anything.
+
+Finding artifacts and selling them to museums or private collectors will increase your wealth level by 1. Might be worth finding a few extras!
+
+You can gain things at a higher wealth level than you currently have. However, doing so will reduce your wealth level by the difference.
+If you enter negative wealth level, you now have debt. This lowers your base reputation everywhere.
+In addition you will randomly encounter debt collectors who will demand you hand over the items you are currently carrying or fight you.
+These get more frequent and dangerous as you go further into debt.
