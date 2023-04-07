@@ -138,10 +138,9 @@ int Skill_calculateXP(int currentSkill, int education) {
     return cost;
 }
 
-bool Skill_test(int currentSkill, int easinessModifierPercentage) {
-    int target = (currentSkill * easinessModifierPercentage) / 100;
-    int roll = GetRandomValue(1, 100);
-    return roll <= target;
+bool Skill_test(int currentSkill, int difficultyMod) {
+    int roll = GetRandomValue(1, 100) + difficultyMod;
+    return roll <= currentSkill;
 }
 
 typedef struct PlayerStats {
@@ -166,7 +165,8 @@ PlayerStats playerStats = (PlayerStats) {
     .morale=4,
     .satiation=4,
     .rest=4,
-    .attributes={10,10,10,10,10,10,10}
+    .attributes={10,10,10,10,10,10,10},
+    .skills={10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10}
 };
 Entity playerEntity = (Entity) {"Player", "It's you.", 100, 0, 4, 4, {1, 3, 0}};
 
@@ -670,9 +670,9 @@ void AlertAllEnemiesInRoom(Room* r) {
     }
 }
 
-void MakeNoise() {
+void MakeNoise(int potentialLoudness) {
     // Check the player's stealth skill
-    bool wasQuiet = Skill_test(playerStats.skills[SKILL_STEALTH], 100);
+    bool wasQuiet = Skill_test(playerStats.skills[SKILL_STEALTH], potentialLoudness);
     if (wasQuiet) {
         return;
     }
@@ -749,7 +749,7 @@ void Verb_inventoryUse(Entity* e) {
                 CombatReward(&currentRoom->entities[i]);
             }
             Inventory_remove(e->id);
-            MakeNoise();
+            MakeNoise(100);
             break;
         default:
             break;
@@ -772,7 +772,7 @@ void Fight(Entity* attacker, Entity* defender) {
     }
     attacker->actedThisTurn = true;
     defender->actedThisTurn = true;
-    MakeNoise();
+    MakeNoise(15);
 }
 
 void Verb_attack(Entity* e) {
@@ -925,7 +925,7 @@ void HandlePlayerTurn() {
                     return;
                 }
                 currentRoom = currentRoom->exits[menuAction];
-                MakeNoise();
+                MakeNoise(-25);
                 HandleGameTurn();
                 TextCopy(roomDescription, currentRoom->description);
                 SetVerbMenu();
