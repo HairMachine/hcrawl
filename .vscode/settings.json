@@ -13,6 +13,7 @@
 		"string_view": "c",
 		"initializer_list": "c",
 		"stdlib.h": "c",
-		"cmath": "c"
+		"cmath": "c",
+		"*.m": "c"
 	}
 }

@@ -56,7 +56,7 @@ typedef enum SpecialAttack {
 } SpecialAttack;
 
 typedef enum ActorStates {
-    STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN
+    STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN, STATE_HEARD_SOMETHING
 } ActorState;
 
 typedef struct Entity {
@@ -303,6 +303,10 @@ typedef enum Direction {
     DIR_NORTH, DIR_EAST, DIR_SOUTH, DIR_WEST, DIR_MAX
 } Direction;
 
+char dirStrings[DIR_MAX][8] = {
+    "North", "East", "South", "West"
+};
+
 typedef struct Room Room;
 struct Room {
     char description[ENCOUNTER_TEXT_LENGTH];
@@ -356,7 +360,7 @@ void Encounter_linkRooms(Room* from, Room* to, Direction dir) {
 void EncounterTemplate_humpyHouse(Encounter* enc) {
     Room* hallway = Encounter_addRoom(enc, 0, 0, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
     Room* kitchen = Encounter_addRoom(enc, 0, 1, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
-    Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing.", {}});
+    Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing."});
     Room* bedroom = Encounter_addRoom(enc, 2, 0, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
     Encounter_linkRooms(hallway, kitchen, DIR_SOUTH);
     Encounter_linkRooms(hallway, landing, DIR_EAST);
@@ -548,7 +552,7 @@ void CombatReward(Entity* e) {
 }
 
 typedef enum {
-    MENU_VERB, MENU_ATTACK, MENU_HIDE, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE, MENU_INVENTORY, MENU_SKILLS, MENU_CHANGE_LOCATION
+    MENU_VERB, MENU_ATTACK, MENU_HIDE, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE, MENU_INVENTORY, MENU_WAIT, MENU_SKILLS, MENU_CHANGE_LOCATION
 } MenuIds;
 
 void SetVerbMenu() {
@@ -559,8 +563,9 @@ void SetVerbMenu() {
     actionMenu.items[3] = (UIElement) {"E(x)amine", MENU_EXAMINE, KEY_X, 128, 16, 1, 16, textColour};
     actionMenu.items[4] = (UIElement) {"(U)se", MENU_USE, KEY_U, 128, 16, 1, 16, textColour};
     actionMenu.items[5] = (UIElement) {"(I)nventory", MENU_INVENTORY, KEY_I, 128, 16, 1, 16, textColour};
-    actionMenu.items[6] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
-    actionMenu.nextItem = 7;
+    actionMenu.items[6] = (UIElement) {"(W)ait", MENU_WAIT, KEY_W, 128, 16, 1, 16, textColour};
+    actionMenu.items[7] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
+    actionMenu.nextItem = 8;
 }
 
 void SetEntityMenu(int id) {
@@ -681,7 +686,7 @@ void SetSkillMenu() {
 void AlertAllEnemiesInRoom(Room* r) {
     for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
         if (Entity_isMob(&r->entities[i])) {
-            r->entities[i].state = STATE_ALERTED;
+            r->entities[i].state = STATE_HEARD_SOMETHING;
         }
     }
 }
@@ -706,6 +711,12 @@ void Fight(Entity* attacker, Entity* defender) {
         return;
     }
     int chanceToHit;
+    // Attacking from a hidden position always hits, is twice as strong, and skips the defender's turn too
+    if (attacker->state == STATE_HIDDEN) {
+        defender->hp -= RollDice(playerEntity.damage) * 2;
+        defender->actedThisTurn = true;
+        return;
+    }
     if (!defender->defence) {
         chanceToHit = 100;
     } else {
@@ -715,7 +726,6 @@ void Fight(Entity* attacker, Entity* defender) {
         defender->hp -= RollDice(playerEntity.damage);
     }
     attacker->actedThisTurn = true;
-    defender->actedThisTurn = true;
     MakeNoise(15);
 }
 
@@ -793,7 +803,6 @@ void Verb_inventoryUse(Entity* e) {
 }
 
 void Verb_attack(Entity* e) {
-    playerEntity.state = STATE_IDLE;
     if (playerStats.weapon) {
         // Do we have the correct ammo type?
         Entity* ammo = Inventory_getByEntityId(entities[playerStats.weapon].ammoType);
@@ -809,6 +818,7 @@ void Verb_attack(Entity* e) {
         Fight(&playerEntity, e);
     }
     CombatReward(e);
+    playerEntity.state = STATE_IDLE;
 }
 
 void Verb_pickup(Entity* e) {
@@ -825,6 +835,9 @@ void MoveEntity(Entity* e, Room* to) {
         if (to->entities[i].created == 0) {
             Entity copy = *e;
             e->created = 0;
+            e->attack = 0;
+            e->id = 0;
+            e->defence = 0;
             to->entities[i] = copy;
             to->entities[i].actedThisTurn = true;
             return;
@@ -838,22 +851,37 @@ void HandleGameTurn() {
         if (r->created) {
             for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
                 Entity* e = &r->entities[i];
-                if (!e->actedThisTurn && e->created && e->hp > 0 && e->attack && e->defence) {
-                    if (r == currentRoom) {
+                if (!e->actedThisTurn && Entity_isMob(e)) {
+                    // The state machine is "interrupted" if the monster is currently with the player - regardless of state, they attack.
+                    // However if the player is hidden we continue with the normal fallback behaviour.
+                    if (r == currentRoom) {                 
+                        if (!e->seen) {
+                            playerStats.stress += (e->fear - playerStats.stressResistance > 1) ? e->fear - playerStats.stressResistance : 1;
+                            e->seen = true;
+                        }
                         // If the player isn't hiding, monsters do bad things
                         if (playerEntity.state != STATE_HIDDEN) {
                             if (e->state == STATE_ALERTED) {
                                 Fight(e, &playerEntity);
                             }
                             e->state = STATE_ALERTED;
-                        }                        
-                        if (!e->seen) {
-                            playerStats.stress += (e->fear - playerStats.stressResistance > 1) ? e->fear - playerStats.stressResistance : 1;
-                            e->seen = true;
+                        } else {
+                            // When the player is hidden the monster goes into the wandering state
+                            e->state = STATE_WANDER;
                         }
+                    }
+                    if (e->actedThisTurn) {
+                        continue;
+                    }
+                    // If the monster isn't interacting with the player, it should fall through to here
+                    if (e->state == STATE_HEARD_SOMETHING) {
+                        e->state = STATE_ALERTED;
                     } else if (e->state == STATE_ALERTED) {
-                        // If an alerted enemy doesn't find the player in one turn, they go into wandering state instead
-                        e->state = STATE_WANDER;
+                        // If an alerted enemy doesn't find the player in one turn, they may go into wandering state instead
+                        // TODO: Possibly a monster property?
+                        if (GetRandomValue(1, 3) == 1) {
+                            e->state = STATE_WANDER;
+                        }
                         // Otherwise entities wander about, find the player, etc. etc.
                         if (currentRoom->y < r->y && r->exits[DIR_NORTH]) {
                             MoveEntity(e, r->exits[DIR_NORTH]);
@@ -865,9 +893,12 @@ void HandleGameTurn() {
                             MoveEntity(e, r->exits[DIR_WEST]);
                         }                        
                     } else if (e->state == STATE_WANDER) {
-                        // Randomly choose an exit, walk one room, then return to idle
+                        // Randomly choose an exit and have a look there; chance to return to idle.
                         bool exitFound = false;
-                        e->state = STATE_IDLE;
+                        // TODO: Possibly a monster property?
+                        if (GetRandomValue(1, 3) == 1) {
+                            e->state = STATE_IDLE;
+                        }
                         while (!exitFound) {
                             Direction d = (Direction) GetRandomValue(DIR_NORTH, DIR_WEST);
                             if (r->exits[d]) {
@@ -886,6 +917,15 @@ void HandleGameTurn() {
         if (r->created) {
             for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
                 r->entities[i].actedThisTurn = false;
+            }
+        }
+    }
+    for (int i = 0; i < DIR_MAX; i++) {
+        if (currentRoom->exits[i]) {
+            for (int f = 0; f < ENCOUNTER_MAX_ENTITY; f++) {
+                if (Entity_isMob(&currentRoom->exits[i]->entities[f])) {
+                    break;
+                }
             }
         }
     }
@@ -929,6 +969,10 @@ void HandlePlayerTurn() {
                         return;
                     case MENU_INVENTORY:
                         SetInventoryMenu();
+                        return;
+                    case MENU_WAIT:
+                        HandleGameTurn();
+                        TextCopy(statusMessage, "Time passes.");
                         return;
                     case MENU_EXPLORE:
                         // Player cannot leave if a) there are enemies and b) stress is 100% or more
@@ -1112,6 +1156,39 @@ int main() {
     return 0;
 }
 
+void DrawAreaMap() {
+    for (int x = 0; x < 8; x++) {
+        for (int y = 0; y < 8; y++) {
+            int roomIndex = x * 8 + y;
+            if (!currentEncounter.rooms[roomIndex].created) {
+                continue;
+            }
+            DrawRectangleLines(600 + (x*50), 300 + (y*50), 50, 50, BLACK);
+            if (currentRoom == &currentEncounter.rooms[roomIndex]) {
+                DrawText("@", 600 + (x*50) + 15, 300 + (y*50) + 15, 8, BLACK);
+            }
+            for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
+                if (Entity_isMob(&currentEncounter.rooms[roomIndex].entities[i])) {
+                    switch (currentEncounter.rooms[roomIndex].entities[i].state) {
+                        case STATE_IDLE:
+                            DrawText(":", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            break;
+                        case STATE_ALERTED:
+                            DrawText("!", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            break;
+                        case STATE_WANDER:
+                        case STATE_HEARD_SOMETHING:
+                            DrawText("?", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            break;
+                        case STATE_HIDDEN:
+                            break;
+                    }
+                }
+            }
+        }
+    }
+}
+
 // Update and draw game frame
 static void UpdateDrawFrame(void) {
     BeginDrawing();
@@ -1132,6 +1209,21 @@ static void UpdateDrawFrame(void) {
                 );
             }
         }
+        // Show information about any mobs in adjacent rooms
+        // TODO: Reset this each time the game turn moves and set a flag on the room?
+        for (int i = 0; i < DIR_MAX; i++) {
+            if (currentRoom->exits[i]) {
+                for (int j = 0; j < ENCOUNTER_MAX_ENTITY; j++) {
+                    if (Entity_isMob(&currentRoom->exits[i]->entities[j])) {
+                        TextCopy(
+                            itemsHere,
+                            TextFormat("%s\nYou hear something moving to the %s...", itemsHere, dirStrings[i])
+                        );
+                        break;
+                    }
+                }
+            }
+        }
         DrawTextEx(fontTtf, TextFormat("%s\n%s", roomDescription, itemsHere), (Vector2) {10, 10}, fontSize, 0, textColour);
         Menu_draw(actionMenu);
         // Status bar
@@ -1150,6 +1242,7 @@ static void UpdateDrawFrame(void) {
         if (playerEntity.state == STATE_HIDDEN) {
             DrawTextEx(fontTtf, "Hidden", (Vector2) {210, 416}, fontSize, 0, MAROON);
         }
+        DrawAreaMap();
         // Popup box for messages
         if (TextLength(popupBox)) {
             DrawRectangle(100, 50, 600, 500, bgColour);
