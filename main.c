@@ -15,6 +15,12 @@
     #include <emscripten/emscripten.h>
 #endif
 
+typedef struct Dice {
+    int num;
+    int sides;
+    int mod;
+} Dice;
+
 // ENTITIES
 
 typedef enum {
@@ -37,7 +43,8 @@ typedef enum {
     ENT_NERVE_GAS_LAUNCHER, ENT_ROCKET_LAUNCHER, ENT_FIREBOMB, ENT_LIGHTNING_GUN,
     ENT_9MM, ENT_50CAL, ENT_FGAS, ENT_FRAG_GRENADE, ENT_NGAS, ENT_ROCKET, ENT_BATTERY,
     ENT_STIMPACK, ENT_MEDIKIT, ENT_BANDAGE, ENT_MORPHINE, ENT_SERUM, ENT_SEDATIVE,
-    ENT_SCROLL_TELEPORT, ENT_SCROLL_CREATE_ZOMBIE, ENT_SCROLL_WITHER, ENT_SCROLL_SHRINK,
+    ENT_SCROLL_TELEPORT, ENT_SCROLL_CREATE_ZOMBIE, ENT_SCROLL_WITHER, ENT_SCROLL_SHRINK, ENT_SCROLL_HOLD,
+    ENT_SCROLL_POISON, ENT_SCROLL_PARALYSE,
     ENT_KEY,
     
     ENT_PLOTSTART,
@@ -45,19 +52,14 @@ typedef enum {
     ENT_END
 } EntityId;
 
-typedef struct Dice {
-    int num;
-    int sides;
-    int mod;
-} Dice;
-
-typedef enum SpecialAttack {
-    ATK_GRAPPLE, ATK_ROT, ATK_POISON, ATK_PARALYSE
-} SpecialAttack;
-
 typedef enum ActorStates {
     STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN, STATE_HEARD_SOMETHING
 } ActorState;
+
+typedef enum SpellId {
+    SPELL_HOLD, SPELL_ROT, SPELL_POISON, SPELL_PARALYSE, SPELL_TELEPORT, SPELL_RAISE_ZOMBIE, SPELL_SHRINK,
+    SPELL_MAX
+} SpellId;
 
 typedef struct Entity {
     char name[32];
@@ -68,7 +70,7 @@ typedef struct Entity {
     int defence; // decreases enemy chance to hit
     Dice damage;
     int fear;
-    SpecialAttack specials[3];
+    SpellId spells[32];
     EntityId ammoType;
     int stack; // default stack size when item is picked up - used mostly for ammo
     // autopopulated, not in data
@@ -125,6 +127,23 @@ SkillData skillData[SKILL_MAX] = {
     {"Throwing"}
 };
 
+typedef struct SpellData {
+    SpellId id;
+    char name[32];
+    int cost;
+    Skill school;
+} SpellData;
+
+SpellData spellData[SPELL_MAX] = {
+    (SpellData) {SPELL_HOLD, "Grasping Tentacles", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_ROT, "Word of Withering", 10, SKILL_MAGIC_ALTERATION},
+    (SpellData) {SPELL_POISON, "Serpent Sting", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_PARALYSE, "Paralysing Fog", 10, SKILL_MAGIC_CONJURATION},
+    (SpellData) {SPELL_TELEPORT, "Teleport", 10, SKILL_MAGIC_ALTERATION},
+    (SpellData) {SPELL_RAISE_ZOMBIE, "Raise Zombie", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_SHRINK, "Diminuation Ray", 10, SKILL_MAGIC_ALTERATION}
+};
+
 int Skill_calculateXP(int currentSkill, int education) {
     int cost = 0;
     if (currentSkill < 50) {
@@ -159,6 +178,10 @@ typedef struct PlayerStats {
     int xp;
     int level;
     int sp; // Skill points can be spent by studying, modified by EDU.
+    int spellSlotsLeft;
+    int spellsKnown;
+    int mp;
+    int mpMax;
 } PlayerStats;
 
 PlayerStats playerStats = (PlayerStats) {
@@ -167,7 +190,10 @@ PlayerStats playerStats = (PlayerStats) {
     .satiation=4,
     .rest=4,
     .attributes={10,10,10,10,10,10,10},
-    .skills={10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10}
+    .skills={10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10},
+    .spellSlotsLeft=1,
+    .mp=20,
+    .mpMax=20
 };
 Entity playerEntity = (Entity) {"Player", "It's you.", 100, 0, 4, 4, {1, 3, 0}};
 
@@ -243,11 +269,14 @@ Entity entities[ENT_END] = {
     (Entity) {"Morphine", "Prevents morale damage from being wounded.", 1000, 1},
     (Entity) {"Serum", "A strange blue liquid. When consumed, it will send you into a frenzy.", 1000, 1},
     (Entity) {"Sedative", "Calms you down, but be careful about overuse.", 1000, 1},
-    (Entity) {"Scoll of Teleport", "The teleport spell will immediately remove you from a dangerous situation.", 1000, 1},
-    (Entity) {"Scroll of Create Zombie", "This dark magic creates a zombie to fight with you.", 1000, 1},
-    (Entity) {"Scroll of Wither", "This terrible spell will drain the life from all living targets, inflicting massive damage.", 1000, 1},
-    (Entity) {"Scroll of Shrink", "The shrinking spell will shrink any object down to tiny size.", 1000, 1},
-    (Entity) {"Key", "Can be used to unlock a door, shockingly.", 1000, 1},
+    (Entity) {"Scoll of Teleport", "Transdimensional energies instantly move you elsewhere, but you cannot control it precisely.", 1000, 1},
+    (Entity) {"Scroll of Raise Zombie", "This dark magic creates a zombie to fight with you.", 1000, 1},
+    (Entity) {"Scroll of Word of Wither", "This terrible spell will drain the life from all living targets, inflicting massive damage.", 1000, 1},
+    (Entity) {"Scroll of Diminuation Ray", "A green ray of unearthly energies shrinks and enfeebles those it touches.", 1000, 1},
+    (Entity) {"Scroll of Grasping Tentacles", "Tentacles burst from the floor and bind the target, immobilising it.", 1000, 1},
+    (Entity) {"Scroll of Serpent's Sting", "A spectral black viper materialises and lunges at the target, injecting poison.", 1000, 1},
+    (Entity) {"Scroll of Paralysing Fog", "A strange golden mist fills the air; those that breathe it fall, unable to move.", 1000, 1},
+    (Entity) {"Key", "Used to unlock a locked door.", 1000, 1},
 
     (Entity) {"= PLOT FEATURE START ="},
     (Entity) {"Letter", ":introLetter", 1000, 1},
@@ -360,7 +389,7 @@ void Encounter_linkRooms(Room* from, Room* to, Direction dir) {
 void EncounterTemplate_humpyHouse(Encounter* enc) {
     Room* hallway = Encounter_addRoom(enc, 0, 0, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
     Room* kitchen = Encounter_addRoom(enc, 0, 1, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
-    Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing."});
+    Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing.", {ENT_SCROLL_PARALYSE}});
     Room* bedroom = Encounter_addRoom(enc, 2, 0, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
     Encounter_linkRooms(hallway, kitchen, DIR_SOUTH);
     Encounter_linkRooms(hallway, landing, DIR_EAST);
@@ -552,20 +581,22 @@ void CombatReward(Entity* e) {
 }
 
 typedef enum {
-    MENU_VERB, MENU_ATTACK, MENU_HIDE, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE, MENU_INVENTORY, MENU_WAIT, MENU_SKILLS, MENU_CHANGE_LOCATION
+    MENU_VERB, MENU_ATTACK, MENU_CAST, MENU_HIDE, MENU_PICKUP, MENU_EXAMINE, MENU_EXPLORE, MENU_USE,
+    MENU_INVENTORY, MENU_WAIT, MENU_SKILLS, MENU_CHANGE_LOCATION
 } MenuIds;
 
 void SetVerbMenu() {
     actionMenu.id = MENU_VERB;
     actionMenu.items[0] = (UIElement) {"(A)ttack", MENU_ATTACK, KEY_A, 128, 16, 1, 16, textColour};
-    actionMenu.items[1] = (UIElement) {"(H)ide", MENU_HIDE, KEY_H, 128, 16, 1, 16, textColour};
-    actionMenu.items[2] = (UIElement) {"(P)ick up", MENU_PICKUP, KEY_P, 128, 16, 1, 16, textColour};
-    actionMenu.items[3] = (UIElement) {"E(x)amine", MENU_EXAMINE, KEY_X, 128, 16, 1, 16, textColour};
-    actionMenu.items[4] = (UIElement) {"(U)se", MENU_USE, KEY_U, 128, 16, 1, 16, textColour};
-    actionMenu.items[5] = (UIElement) {"(I)nventory", MENU_INVENTORY, KEY_I, 128, 16, 1, 16, textColour};
-    actionMenu.items[6] = (UIElement) {"(W)ait", MENU_WAIT, KEY_W, 128, 16, 1, 16, textColour};
-    actionMenu.items[7] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
-    actionMenu.nextItem = 8;
+    actionMenu.items[1] = (UIElement) {"(C)ast", MENU_CAST, KEY_C, 128, 16, 1, 16, textColour};
+    actionMenu.items[2] = (UIElement) {"(H)ide", MENU_HIDE, KEY_H, 128, 16, 1, 16, textColour};
+    actionMenu.items[3] = (UIElement) {"(P)ick up", MENU_PICKUP, KEY_P, 128, 16, 1, 16, textColour};
+    actionMenu.items[4] = (UIElement) {"E(x)amine", MENU_EXAMINE, KEY_X, 128, 16, 1, 16, textColour};
+    actionMenu.items[5] = (UIElement) {"(U)se", MENU_USE, KEY_U, 128, 16, 1, 16, textColour};
+    actionMenu.items[6] = (UIElement) {"(I)nventory", MENU_INVENTORY, KEY_I, 128, 16, 1, 16, textColour};
+    actionMenu.items[7] = (UIElement) {"(W)ait", MENU_WAIT, KEY_W, 128, 16, 1, 16, textColour};
+    actionMenu.items[8] = (UIElement) {"(L)eave", MENU_EXPLORE, KEY_L, 128, 16, 1, 16, textColour};
+    actionMenu.nextItem = 9;
 }
 
 void SetEntityMenu(int id) {
@@ -683,6 +714,17 @@ void SetSkillMenu() {
     actionMenu.nextItem = key-48;
 }
 
+void SetSpellMenu() {
+    actionMenu.id = MENU_CAST;
+    for (int i = 0; i < playerStats.spellsKnown; i++) {
+        SpellData spell = spellData[playerEntity.spells[i]];
+        actionMenu.items[i] = (UIElement) {"", spell.id, i+49, 128, 16, 1, 16, textColour};
+        TextCopy(actionMenu.items[i].label, TextFormat("%d) %s", i+1, spell.name));
+    }
+    actionMenu.items[playerStats.spellsKnown] = (UIElement) {"0) Back", -1, 48, 128, 16, 1, 16, textColour};
+    actionMenu.nextItem = playerStats.spellsKnown + 1;
+}
+
 void AlertAllEnemiesInRoom(Room* r) {
     for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
         if (Entity_isMob(&r->entities[i])) {
@@ -727,6 +769,18 @@ void Fight(Entity* attacker, Entity* defender) {
     }
     attacker->actedThisTurn = true;
     MakeNoise(15);
+}
+
+void ReadScroll(SpellId spellId, EntityId eid) {
+    if (playerStats.spellSlotsLeft <= 0) {
+        TextCopy(statusMessage, "No spell slots left to learn spell!");
+        return;
+    }
+    playerEntity.spells[playerStats.spellsKnown] = spellId;
+    playerStats.spellSlotsLeft--;
+    playerStats.spellsKnown++;
+    Inventory_remove(eid);
+    return;
 }
 
 
@@ -797,6 +851,9 @@ void Verb_inventoryUse(Entity* e) {
             Inventory_remove(e->id);
             MakeNoise(100);
             break;
+        case ENT_SCROLL_PARALYSE:
+            ReadScroll(SPELL_PARALYSE, e->id);
+            break;
         default:
             break;
     }
@@ -828,6 +885,33 @@ void Verb_pickup(Entity* e) {
     }
     Inventory_add(*e);
     e->hp = 0;
+}
+
+void Verb_cast(SpellData spell) {
+    if (playerStats.mp <= 0) {
+        return;
+    }
+    // TODO: No, spells have targeters, but this is just whatever for now
+    Entity* targets[ENCOUNTER_MAX_ENTITY];
+    int t = 0;
+    for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
+        if (Entity_isMob(&currentRoom->entities[i])) {
+            targets[t++] = &currentRoom->entities[i];
+        }
+    }
+    if (t == 0) {
+        return;
+    }
+    switch (spell.id) {
+        case SPELL_PARALYSE:
+            // TODO: A correct effect!
+            Entity* target = targets[GetRandomValue(0, t-1)];
+            target->hp = 0;
+            break;
+        default:
+            break;
+    }
+    playerStats.mp -= spell.cost;
 }
 
 void MoveEntity(Entity* e, Room* to) {
@@ -954,6 +1038,9 @@ void HandlePlayerTurn() {
                             Verb_attack(&currentRoom->entities[actionMenu.items[0].action]);
                         }
                         return;
+                    case MENU_CAST:
+                        SetSpellMenu();
+                        return;
                     case MENU_HIDE:
                         for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
                             if (Entity_isMob(&currentRoom->entities[i])) {
@@ -1071,6 +1158,18 @@ void HandlePlayerTurn() {
                         playerEntity.hp = 0;            
                     }
                 }
+                return;
+            }
+            case MENU_CAST:
+            {
+                int sid = Menu_action(actionMenu, (UserAction) {key});
+                if (sid == -1) {
+                    SetVerbMenu();
+                    return;
+                }
+                SpellData spell = spellData[sid];
+                Verb_cast(spell);
+                HandleGameTurn();
                 return;
             }
             default:
@@ -1234,6 +1333,7 @@ static void UpdateDrawFrame(void) {
         DrawTextEx(fontTtf, TextFormat("Satiation: %d", playerStats.satiation), (Vector2) {10, 448}, fontSize, 0, DARKGREEN);
         DrawTextEx(fontTtf, TextFormat("Rest: %d", playerStats.rest), (Vector2) {10, 464}, fontSize, 0, DARKGREEN);
         DrawTextEx(fontTtf, TextFormat("Morale: %d", playerStats.morale), (Vector2) {10, 480}, fontSize, 0, DARKGREEN);
+        DrawTextEx(fontTtf, TextFormat("MP: %d/%d", playerStats.mp, playerStats.mpMax), (Vector2) {10, 496}, fontSize, 0, DARKGREEN);
         if (playerStats.weapon) {
             DrawTextEx(fontTtf, TextFormat("WPN: %s", entities[playerStats.weapon].name), (Vector2) {210, 400}, fontSize, 0, textColour);
         } else {
