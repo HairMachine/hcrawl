@@ -345,6 +345,7 @@ struct Room {
     int x;
     int y;
     bool created;
+    bool custom;
 };
 
 typedef struct Encounter {
@@ -386,15 +387,118 @@ void Encounter_linkRooms(Room* from, Room* to, Direction dir) {
     }
 }
 
+void Encounter_generateBasicMap(Encounter* enc, int minSize, int maxSize) {
+    int createdRooms = 0;
+    int roomNumber = GetRandomValue(minSize, maxSize);
+    Vector2 newRoomPos = {GetRandomValue(0, 7), GetRandomValue(0, 7)};
+    Vector2 lastRoomPos = newRoomPos;
+    Room* lastRoom = Encounter_addRoom(enc, newRoomPos.x, newRoomPos.y, (Room) {"A room with a random description."});
+    enc->startingRoom = lastRoom;
+    int panic = 500;
+    while (createdRooms < roomNumber && panic > 0) {
+        Direction dir = (Direction) GetRandomValue(DIR_NORTH, DIR_MAX - 1);
+        switch (dir) {
+            case DIR_NORTH:
+                newRoomPos.y--;
+                break;
+            case DIR_EAST:
+                newRoomPos.x++;
+                break;
+            case DIR_SOUTH:
+                newRoomPos.y++;
+                break;
+            case DIR_WEST:
+                newRoomPos.x--;
+                break;
+            default:
+                break;
+        }
+        if (newRoomPos.y > 7 || newRoomPos.y < 0 || newRoomPos.x > 7 || newRoomPos.x < 0) {
+            newRoomPos = lastRoomPos;
+            panic--;
+            continue;
+        }
+        int roomIndex = newRoomPos.x * 8 + newRoomPos.y;
+        if (enc->rooms[roomIndex].created) {
+            newRoomPos = lastRoomPos;
+            panic--;
+            continue;
+        }
+        Room* newRoom = Encounter_addRoom(enc, newRoomPos.x, newRoomPos.y, (Room) {"A room with a random description."});
+        Encounter_linkRooms(lastRoom, newRoom, dir);
+        lastRoom = newRoom;
+        lastRoomPos = newRoomPos;
+        panic = 500;
+        createdRooms++;
+    }
+}
+
+void Encounter_createExtraDoors(Encounter* enc, int maxExtraDoors) {
+    int doorsAdded = 0;
+    int panic = 500;
+    while (doorsAdded < maxExtraDoors && panic > 0) {
+        int roomIndex = GetRandomValue(0, 63);
+        if (!enc->rooms[roomIndex].created) {
+            continue;
+        }
+        Direction newDir = (Direction) GetRandomValue(DIR_NORTH, DIR_MAX - 1);
+        switch (newDir) {
+            case DIR_NORTH:
+                if (roomIndex - 1 >= 0 && enc->rooms[roomIndex - 1].created) {
+                    Encounter_linkRooms(&enc->rooms[roomIndex], &enc->rooms[roomIndex - 1], newDir);
+                    doorsAdded++;
+                }
+                break;
+            case DIR_EAST:
+                if (roomIndex + 8 < ENCOUNTER_MAX_ROOM && enc->rooms[roomIndex + 8].created) {
+                    Encounter_linkRooms(&enc->rooms[roomIndex], &enc->rooms[roomIndex + 8], newDir);
+                    doorsAdded++;
+                }
+                break;
+            case DIR_SOUTH:
+                if (roomIndex + 1 < ENCOUNTER_MAX_ROOM && enc->rooms[roomIndex + 1].created) {
+                    Encounter_linkRooms(&enc->rooms[roomIndex], &enc->rooms[roomIndex + 1], newDir);
+                    doorsAdded++;
+                }
+                break;
+            case DIR_WEST:
+                if (roomIndex - 8 >= 0 && enc->rooms[roomIndex - 8].created) {
+                    Encounter_linkRooms(&enc->rooms[roomIndex], &enc->rooms[roomIndex - 8], newDir);
+                    doorsAdded++;
+                }
+                break;
+            default:
+                break;
+        }
+        panic--;
+    }
+}
+
+Room* Encounter_populateCustomRoom(Encounter* enc, Room customRoom) {
+    while (true) {
+        int roomIndex = GetRandomValue(0, 63);
+        if (!enc->rooms[roomIndex].created || enc->rooms[roomIndex].custom) {
+            continue;
+        }
+        TextCopy(enc->rooms[roomIndex].description, customRoom.description);
+        enc->rooms[roomIndex].custom = true;
+        for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
+            if (!customRoom.spawnList[i]) {
+                return &enc->rooms[roomIndex];
+            }
+            enc->rooms[roomIndex].entities[i] = Entity_create(customRoom.spawnList[i]);
+        }
+        return &enc->rooms[roomIndex];
+    }
+}
+
 void EncounterTemplate_humpyHouse(Encounter* enc) {
-    Room* hallway = Encounter_addRoom(enc, 0, 0, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
-    Room* kitchen = Encounter_addRoom(enc, 0, 1, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
-    Room* landing = Encounter_addRoom(enc, 1, 0, (Room) {"You are on the landing.", {ENT_SCROLL_PARALYSE}});
-    Room* bedroom = Encounter_addRoom(enc, 2, 0, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
-    Encounter_linkRooms(hallway, kitchen, DIR_SOUTH);
-    Encounter_linkRooms(hallway, landing, DIR_EAST);
-    Encounter_linkRooms(landing, bedroom, DIR_EAST);
-    enc->startingRoom = hallway;
+    Encounter_generateBasicMap(enc, 10, 14);
+    enc->startingRoom = Encounter_populateCustomRoom(enc, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
+    Encounter_populateCustomRoom(enc, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
+    Encounter_populateCustomRoom(enc, (Room) {"You are on the landing.", {ENT_SCROLL_PARALYSE}});
+    Encounter_populateCustomRoom(enc, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
+    Encounter_createExtraDoors(enc, 6);
 }
 
 Location arkham = {
@@ -1256,28 +1360,56 @@ int main() {
 }
 
 void DrawAreaMap() {
+    int startX = 300;
+    int startY = 200;
     for (int x = 0; x < 8; x++) {
         for (int y = 0; y < 8; y++) {
             int roomIndex = x * 8 + y;
             if (!currentEncounter.rooms[roomIndex].created) {
                 continue;
             }
-            DrawRectangleLines(600 + (x*50), 300 + (y*50), 50, 50, BLACK);
+            DrawRectangleLines(startX + (x*50), startY + (y*50), 50, 50, BLACK);
+            int xoffs, yoffs = 0;
+            for (int exitIndex = 0; exitIndex < DIR_MAX; exitIndex++) {
+                    switch ((Direction) exitIndex) {
+                        case DIR_NORTH:
+                            xoffs = 20;
+                            yoffs = -5;
+                            break;
+                        case DIR_EAST:
+                            xoffs = 45;
+                            yoffs = 20;
+                            break;
+                        case DIR_SOUTH:
+                            xoffs = 20;
+                            yoffs = 45;
+                            break;
+                        case DIR_WEST:
+                            xoffs = -5;
+                            yoffs = 20;
+                            break;
+                        default:
+                            break;
+                    }
+                    if (currentEncounter.rooms[roomIndex].exits[exitIndex]) {
+                        DrawRectangle(startX + (x*50) + xoffs, startY + (y*50) + yoffs, 10, 10, BLACK);
+                    }
+                }
             if (currentRoom == &currentEncounter.rooms[roomIndex]) {
-                DrawText("@", 600 + (x*50) + 15, 300 + (y*50) + 15, 8, BLACK);
+                DrawText("@", startX + (x*50) + 15, startY + (y*50) + 15, 8, BLACK);
             }
             for (int i = 0; i < ENCOUNTER_MAX_ENTITY; i++) {
                 if (Entity_isMob(&currentEncounter.rooms[roomIndex].entities[i])) {
                     switch (currentEncounter.rooms[roomIndex].entities[i].state) {
                         case STATE_IDLE:
-                            DrawText(":", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            DrawText(":", startX + (x*50) + 5, startY + (y*50) + 5, 8, BLACK);
                             break;
                         case STATE_ALERTED:
-                            DrawText("!", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            DrawText("!", startX + (x*50) + 5, startY + (y*50) + 5, 8, BLACK);
                             break;
                         case STATE_WANDER:
                         case STATE_HEARD_SOMETHING:
-                            DrawText("?", 600 + (x*50) + 5, 300 + (y*50) + 5, 8, BLACK);
+                            DrawText("?", startX + (x*50) + 5, startY + (y*50) + 5, 8, BLACK);
                             break;
                         case STATE_HIDDEN:
                             break;
