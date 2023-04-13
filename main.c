@@ -15,73 +15,16 @@
     #include <emscripten/emscripten.h>
 #endif
 
+Font fontTtf;
+int fontSize = 16;
+
 typedef struct Dice {
     int num;
     int sides;
     int mod;
 } Dice;
 
-// ENTITIES
-
-typedef enum {
-    ENT_MONSTERSTART,
-    ENT_WOLF, ENT_VIPER, ENT_RAT_THING, ENT_SPAWN, ENT_ZOMBIE,
-    ENT_GUARD, ENT_TROOPER, ENT_OFFICER,
-    ENT_OGRE, ENT_GHOUL, ENT_GHAST, ENT_WIGHT, ENT_LICH, ENT_DEMILICH,
-    ENT_BYAKHEE, ENT_CHTHONIAN, ENT_COLOUR, ENT_DARK_YOUNG, ENT_DEEP_ONE, ENT_SHAMBLER, ENT_POLYP, ENT_HORROR,
-
-    ENT_SPAWNERSTART,
-    ENT_CELLARSPAWNER1, ENT_ITEMSPAWNER1, ENT_FEATURESPAWNER1,
-    
-    ENT_FEATURESTART,
-    ENT_DEBRIS, ENT_SAFE, ENT_TABLE, ENT_EXPLODING_BARREL, ENT_WELL,
-    ENT_TOUCHPLATE, ENT_PUSHWALL, ENT_SWITCH, ENT_LOCKED_DOOR, ENT_BOOKSHOP, ENT_GENERAL_STORE,
-    ENT_GALLERY, ENT_BED,
-    
-    ENT_ITEMSTART,
-    ENT_PISTOL, ENT_RIFLE, ENT_FLARE_GUN, ENT_DYNAMITE, ENT_SMG, ENT_FLAMETHROWER, ENT_HMG, ENT_CHAINGUN,
-    ENT_NERVE_GAS_LAUNCHER, ENT_ROCKET_LAUNCHER, ENT_FIREBOMB, ENT_LIGHTNING_GUN,
-    ENT_9MM, ENT_50CAL, ENT_FGAS, ENT_FRAG_GRENADE, ENT_NGAS, ENT_ROCKET, ENT_BATTERY,
-    ENT_STIMPACK, ENT_MEDIKIT, ENT_BANDAGE, ENT_MORPHINE, ENT_SERUM, ENT_SEDATIVE,
-    ENT_SCROLL_TELEPORT, ENT_SCROLL_CREATE_ZOMBIE, ENT_SCROLL_WITHER, ENT_SCROLL_SHRINK, ENT_SCROLL_HOLD,
-    ENT_SCROLL_POISON, ENT_SCROLL_PARALYSE,
-    ENT_KEY,
-    
-    ENT_PLOTSTART,
-    ENT_LETTER, ENT_HUMPY_FRONT_DOOR, ENT_HUMPY_CELLAR_DOOR, ENT_HUMPY_CELLAR_KEY, ENT_HUMPY_BODY,
-    ENT_END
-} EntityId;
-
-typedef enum ActorStates {
-    STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN, STATE_HEARD_SOMETHING
-} ActorState;
-
-typedef enum SpellId {
-    SPELL_HOLD, SPELL_ROT, SPELL_POISON, SPELL_PARALYSE, SPELL_TELEPORT, SPELL_RAISE_ZOMBIE, SPELL_SHRINK,
-    SPELL_MAX
-} SpellId;
-
-typedef struct Entity {
-    char name[32];
-    char examine[256];
-    int hp;
-    int portable;
-    int attack; // increases chance to hit
-    int defence; // decreases enemy chance to hit
-    Dice damage;
-    int fear;
-    SpellId spells[32];
-    EntityId ammoType;
-    int stack; // default stack size when item is picked up - used mostly for ammo
-    // autopopulated, not in data
-    EntityId id;
-    int hpMax;
-    int created;
-    ActorState state;
-    bool actedThisTurn;
-    bool seen;
-    bool canHideIn;
-} Entity;
+// ATTRIBUTES AND SKILLS
 
 typedef enum Attribute {
     ATTR_STR, ATTR_CON, ATTR_EDU, ATTR_INT, ATTR_DEX, ATTR_POW, ATTR_CHA,
@@ -105,45 +48,6 @@ typedef struct SkillData {
     char name[32];
 } SkillData;
 
-SkillData skillData[SKILL_MAX] = {
-    {"Climbing"},
-    {"Craft Automaton"},
-    {"Craft Trap"},
-    {"Dodge"},
-    {"Automatics"},
-    {"Artillery"},
-    {"Handguns"},
-    {"Rifles"},
-    {"Shotguns"},
-    {"First aid"},
-    {"Locksmithing"},
-    {"Alteration Magic"},
-    {"Conjuration Magic"},
-    {"Illusion Magic"},
-    {"Spellcasting"},
-    {"Summoning Magic"},
-    {"Spot Hidden"},
-    {"Stealth"},
-    {"Throwing"}
-};
-
-typedef struct SpellData {
-    SpellId id;
-    char name[32];
-    int cost;
-    Skill school;
-} SpellData;
-
-SpellData spellData[SPELL_MAX] = {
-    (SpellData) {SPELL_HOLD, "Grasping Tentacles", 10, SKILL_MAGIC_SUMMONING},
-    (SpellData) {SPELL_ROT, "Word of Withering", 10, SKILL_MAGIC_ALTERATION},
-    (SpellData) {SPELL_POISON, "Serpent Sting", 10, SKILL_MAGIC_SUMMONING},
-    (SpellData) {SPELL_PARALYSE, "Paralysing Fog", 10, SKILL_MAGIC_CONJURATION},
-    (SpellData) {SPELL_TELEPORT, "Teleport", 10, SKILL_MAGIC_ALTERATION},
-    (SpellData) {SPELL_RAISE_ZOMBIE, "Raise Zombie", 10, SKILL_MAGIC_SUMMONING},
-    (SpellData) {SPELL_SHRINK, "Diminuation Ray", 10, SKILL_MAGIC_ALTERATION}
-};
-
 int Skill_calculateXP(int currentSkill, int education) {
     int cost = 0;
     if (currentSkill < 50) {
@@ -158,44 +62,81 @@ int Skill_calculateXP(int currentSkill, int education) {
     return cost;
 }
 
+// SPELLS
+
+typedef enum SpellId {
+    SPELL_HOLD, SPELL_ROT, SPELL_POISON, SPELL_PARALYSE, SPELL_TELEPORT, SPELL_RAISE_ZOMBIE, SPELL_SHRINK,
+    SPELL_MAX
+} SpellId;
+
+typedef struct SpellData {
+    SpellId id;
+    char name[32];
+    int cost;
+    Skill school;
+} SpellData;
+
 bool Skill_test(int currentSkill, int difficultyMod) {
     int roll = GetRandomValue(1, 100) + difficultyMod;
     return roll <= currentSkill;
 }
 
-typedef struct PlayerStats {
-    int stress;
-    int stressRecovery;
-    int stressResistance;
-    int morale;
-    int satiation;
-    int rest;
-    int actions;
-    int actionsMax;
-    EntityId weapon; 
-    Attribute attributes[ATTR_MAX];
-    Skill skills[SKILL_MAX]; 
-    int xp;
-    int level;
-    int sp; // Skill points can be spent by studying, modified by EDU.
-    int spellSlotsLeft;
-    int spellsKnown;
-    int mp;
-    int mpMax;
-} PlayerStats;
+// ENTITIES
 
-PlayerStats playerStats = (PlayerStats) {
-    .stressRecovery=10,
-    .morale=4,
-    .satiation=4,
-    .rest=4,
-    .attributes={10,10,10,10,10,10,10},
-    .skills={10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10},
-    .spellSlotsLeft=1,
-    .mp=20,
-    .mpMax=20
-};
-Entity playerEntity = (Entity) {"Player", "It's you.", 100, 0, 4, 4, {1, 3, 0}};
+typedef enum ActorStates {
+    STATE_IDLE, STATE_ALERTED, STATE_WANDER, STATE_HIDDEN, STATE_HEARD_SOMETHING
+} ActorState;
+
+typedef enum {
+    ENT_MONSTERSTART,
+    ENT_WOLF, ENT_VIPER, ENT_RAT_THING, ENT_SPAWN, ENT_ZOMBIE,
+    ENT_GUARD, ENT_TROOPER, ENT_OFFICER,
+    ENT_OGRE, ENT_GHOUL, ENT_GHAST, ENT_WIGHT, ENT_LICH, ENT_DEMILICH,
+    ENT_BYAKHEE, ENT_CHTHONIAN, ENT_COLOUR, ENT_DARK_YOUNG, ENT_DEEP_ONE, ENT_SHAMBLER, ENT_POLYP, ENT_HORROR,
+
+    ENT_SPAWNERSTART,
+    ENT_CELLARSPAWNER1, ENT_ITEMSPAWNER1, ENT_FEATURESPAWNER1,
+    
+    ENT_FEATURESTART,
+    ENT_DEBRIS, ENT_SAFE, ENT_TABLE, ENT_EXPLODING_BARREL, ENT_WELL,
+    ENT_TOUCHPLATE, ENT_PUSHWALL, ENT_SWITCH, ENT_LOCKED_DOOR, ENT_BOOKSHOP, ENT_GENERAL_STORE,
+    ENT_GALLERY, ENT_BED, ENT_DOOR,
+    
+    ENT_ITEMSTART,
+    ENT_PISTOL, ENT_RIFLE, ENT_FLARE_GUN, ENT_DYNAMITE, ENT_SMG, ENT_FLAMETHROWER, ENT_HMG, ENT_CHAINGUN,
+    ENT_NERVE_GAS_LAUNCHER, ENT_ROCKET_LAUNCHER, ENT_FIREBOMB, ENT_LIGHTNING_GUN,
+    ENT_9MM, ENT_50CAL, ENT_FGAS, ENT_FRAG_GRENADE, ENT_NGAS, ENT_ROCKET, ENT_BATTERY,
+    ENT_STIMPACK, ENT_MEDIKIT, ENT_BANDAGE, ENT_MORPHINE, ENT_SERUM, ENT_SEDATIVE,
+    ENT_SCROLL_TELEPORT, ENT_SCROLL_CREATE_ZOMBIE, ENT_SCROLL_WITHER, ENT_SCROLL_SHRINK, ENT_SCROLL_HOLD,
+    ENT_SCROLL_POISON, ENT_SCROLL_PARALYSE,
+    ENT_KEY, ENT_CLUE_BOOK,
+    
+    ENT_PLOTSTART,
+    ENT_LETTER, ENT_HUMPY_CELLAR_DOOR, ENT_HUMPY_CELLAR_KEY, ENT_HUMPY_BODY,
+    ENT_END
+} EntityId;
+
+typedef struct Entity {
+    char name[32];
+    char examine[256];
+    int hp;
+    int portable;
+    int attack; // increases chance to hit
+    int defence; // decreases enemy chance to hit
+    Dice damage;
+    int fear;
+    SpellId spells[32];
+    EntityId ammoType;
+    int stack; // default stack size when item is picked up - used mostly for ammo
+    // autopopulated, not in data
+    EntityId id;
+    int hpMax;
+    int created;
+    ActorState state;
+    bool actedThisTurn;
+    bool seen;
+    bool canHideIn;
+} Entity;
 
 // TODO: Load from external file (compiled CSV file)
 Entity entities[ENT_END] = {
@@ -242,6 +183,7 @@ Entity entities[ENT_END] = {
     (Entity) {"Counter", "A bored-looking assistant waits to take your order.", 1000},
     (Entity) {"Ticket office", "An attendant waits behind a desk, selling tickets to the gallery.", 1000},
     (Entity) {"Bed", "A bed. Use it to sleep and recover rest and HP (up to 50 percent of max)", 1000, .canHideIn=true},
+    (Entity) {"Door", "A door leading out of this place.", 1000, 1},
 
     (Entity) {"= ITEM START ="},
     (Entity) {"Pistol", "A compact hand-held weapon. Fires 9mm rounds.", 1000, 1, .attack=8, .damage={1, 6, 0}, .ammoType=ENT_9MM},
@@ -277,10 +219,10 @@ Entity entities[ENT_END] = {
     (Entity) {"Scroll of Serpent's Sting", "A spectral black viper materialises and lunges at the target, injecting poison.", 1000, 1},
     (Entity) {"Scroll of Paralysing Fog", "A strange golden mist fills the air; those that breathe it fall, unable to move.", 1000, 1},
     (Entity) {"Key", "Used to unlock a locked door.", 1000, 1},
+    (Entity) {"Book", "A book of arcane knowledge.", 1000, 1},
 
     (Entity) {"= PLOT FEATURE START ="},
     (Entity) {"Letter", ":introLetter", 1000, 1},
-    (Entity) {"Front door", "This is the front door of Humpy's house.\nIt's closed but not locked.", 1000},
     (Entity) {"Cellar door", "The door to the cellar. It seems to be locked.\nThere's a strange smell coming from here...", 1000},
     (Entity) {"Iron key", "It's a large old iron key, rough to the touch.", 1000, 1},
     (Entity) {"Humpy's corpse", "The dead body of your friend.\n"
@@ -492,19 +434,6 @@ Room* Encounter_populateCustomRoom(Encounter* enc, Room customRoom) {
     }
 }
 
-void EncounterTemplate_humpyHouse(Encounter* enc) {
-    Encounter_generateBasicMap(enc, 10, 14);
-    enc->startingRoom = Encounter_populateCustomRoom(enc, (Room) {"You are in the hallway of Humpy's house.", {ENT_HUMPY_FRONT_DOOR}});
-    Encounter_populateCustomRoom(enc, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
-    Encounter_populateCustomRoom(enc, (Room) {"You are on the landing.", {ENT_SCROLL_PARALYSE}});
-    Encounter_populateCustomRoom(enc, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
-    Encounter_createExtraDoors(enc, 6);
-}
-
-Location arkham = {
-    (EncounterTemplate) {"Humpy's House", &EncounterTemplate_humpyHouse, 1}
-};
-
 void Encounter_create(Encounter* enc, EncounterTemplate et) {
     (*et.constructor)(enc);
 }
@@ -519,19 +448,23 @@ void Encounter_drawFromLocation(Encounter* enc, Location* loc) {
     loc->lastVisited = roll;
 }
 
-// DISPLAY
+// CLUES
 
-char roomDescription[256] = "";
-char popupBox[512] = "";
-char statusMessage[128] = "";
-Encounter currentEncounter = {};
-Room* currentRoom;
-Location* currentLocation;
-Font fontTtf;
-Color textColour = BLACK;
-Color bgColour = LIGHTGRAY;
-Color statusMsgColour = MAROON;
-int fontSize = 16;
+#define CLUES_MAX 64
+
+typedef struct Clue {
+    Location* locationWhere;
+    EncounterTemplate* encounterWhere;
+    EntityId reward;
+    bool known;
+} Clue;
+
+Clue clues[64];
+int clueLast;
+
+void Clue_create() {
+
+}
 
 // MENU
 
@@ -583,8 +516,6 @@ int Menu_action(Menu m, UserAction action) {
     }
     return -1;
 }
-
-Menu actionMenu;
 
 // INVENTORY
 
@@ -640,6 +571,112 @@ void Inventory_remove(EntityId eid) {
         nextInv--;
     }
 }
+
+// DATA
+
+typedef struct PlayerStats {
+    int stress;
+    int stressRecovery;
+    int stressResistance;
+    int morale;
+    int satiation;
+    int rest;
+    int actions;
+    int actionsMax;
+    EntityId weapon; 
+    Attribute attributes[ATTR_MAX];
+    Skill skills[SKILL_MAX]; 
+    int xp;
+    int level;
+    int sp; // Skill points can be spent by studying, modified by EDU.
+    int spellSlotsLeft;
+    int spellsKnown;
+    int mp;
+    int mpMax;
+} PlayerStats;
+
+SkillData skillData[SKILL_MAX] = {
+    {"Climbing"},
+    {"Craft Automaton"},
+    {"Craft Trap"},
+    {"Dodge"},
+    {"Automatics"},
+    {"Artillery"},
+    {"Handguns"},
+    {"Rifles"},
+    {"Shotguns"},
+    {"First aid"},
+    {"Locksmithing"},
+    {"Alteration Magic"},
+    {"Conjuration Magic"},
+    {"Illusion Magic"},
+    {"Spellcasting"},
+    {"Summoning Magic"},
+    {"Spot Hidden"},
+    {"Stealth"},
+    {"Throwing"}
+};
+
+SpellData spellData[SPELL_MAX] = {
+    (SpellData) {SPELL_HOLD, "Grasping Tentacles", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_ROT, "Word of Withering", 10, SKILL_MAGIC_ALTERATION},
+    (SpellData) {SPELL_POISON, "Serpent Sting", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_PARALYSE, "Paralysing Fog", 10, SKILL_MAGIC_CONJURATION},
+    (SpellData) {SPELL_TELEPORT, "Teleport", 10, SKILL_MAGIC_ALTERATION},
+    (SpellData) {SPELL_RAISE_ZOMBIE, "Raise Zombie", 10, SKILL_MAGIC_SUMMONING},
+    (SpellData) {SPELL_SHRINK, "Diminuation Ray", 10, SKILL_MAGIC_ALTERATION}
+};
+
+PlayerStats playerStats = (PlayerStats) {
+    .stressRecovery=10,
+    .morale=4,
+    .satiation=4,
+    .rest=4,
+    .attributes={10,10,10,10,10,10,10},
+    .skills={10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10,10},
+    .spellSlotsLeft=1,
+    .mp=20,
+    .mpMax=20
+};
+Entity playerEntity = (Entity) {"Player", "It's you.", 100, 0, 4, 4, {1, 3, 0}};
+
+void EncounterTemplate_humpyHouse(Encounter* enc) {
+    Encounter_generateBasicMap(enc, 10, 14);
+    enc->startingRoom = Encounter_populateCustomRoom(enc, (Room) {"You are in the hallway of Humpy's house.", {ENT_DOOR}});
+    Encounter_populateCustomRoom(enc, (Room) {"You enter Humpy's kitchen; the reek hits you like a shovel.", {ENT_RAT_THING, ENT_RAT_THING, ENT_HUMPY_CELLAR_DOOR}});
+    Encounter_populateCustomRoom(enc, (Room) {"You are on the landing.", {ENT_SCROLL_PARALYSE}});
+    Encounter_populateCustomRoom(enc, (Room) {"You are in the master bedroom. It is in disarray; papers\nare strewn everywhere.", {ENT_BED, ENT_HUMPY_CELLAR_KEY}});
+    Encounter_createExtraDoors(enc, 6);
+};
+
+void EncounterTemplate_randomNormalMap(Encounter* enc) {
+    Encounter_generateBasicMap(enc, 10, 15);
+    Encounter_createExtraDoors(enc, 5);
+    enc->startingRoom->entities[0] = Entity_create(ENT_DOOR);
+}
+
+Location arkham = {
+    {
+        (EncounterTemplate) {"Humpy's House", &EncounterTemplate_humpyHouse, 1},
+        (EncounterTemplate) {"Gloomy Cavern", &EncounterTemplate_randomNormalMap, 1},
+        (EncounterTemplate) {"Dingy Basement", &EncounterTemplate_randomNormalMap, 1},
+        (EncounterTemplate) {"Dungeon of Doom", &EncounterTemplate_randomNormalMap, 1}
+    }, 3
+};
+
+// Various UI datas
+char roomDescription[256] = "";
+char popupBox[512] = "";
+char statusMessage[128] = "";
+Encounter currentEncounter = {};
+Room* currentRoom;
+Location* currentLocation;
+Color textColour = BLACK;
+Color bgColour = LIGHTGRAY;
+Color statusMsgColour = MAROON;
+Menu actionMenu;
+
+// MAIN - an unstructured blob o'things
 
 void RunScript(char* script) {
     if (TextIsEqual(script, ":introLetter")) {
@@ -891,7 +928,7 @@ void ReadScroll(SpellId spellId, EntityId eid) {
 void Verb_use(Entity* e) {
     playerEntity.state = STATE_IDLE;
     switch (e->id) {
-        case ENT_HUMPY_FRONT_DOOR:
+        case ENT_DOOR:
             SetKnownLocationMenu();
             break;
         case ENT_BOOKSHOP:
@@ -1243,6 +1280,7 @@ void HandlePlayerTurn() {
                 } else if (key == KEY_E) {
                     currentEncounter = (Encounter) {};
                     Encounter_drawFromLocation(&currentEncounter, currentLocation);
+                    TextCopy(popupBox, "You explore the location, and find a new place.");
                     currentRoom = currentEncounter.startingRoom;
                     TextCopy(roomDescription, currentRoom->description);
                     SetVerbMenu();
